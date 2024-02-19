@@ -1,10 +1,26 @@
 import streamlit as st
 import yfinance as yf
 from openai import OpenAI
+import google.generativeai as genai
+import os
+import pandas as pd
+
+# Set the page to fullscreen
+st.set_page_config(
+    page_title="Stock Trend Predictor",
+    page_icon="📈",
+    layout="wide"
+)
+
 
 client = OpenAI(api_key=st.secrets['OPENAI_API_KEY'])
+gemini_api_key = os.environ["GEMINI_API_KEY"]
+genai.configure(api_key = gemini_api_key)
 
+# Create columns with different widths for your layout
+col1, col2 = st.columns([4, 5])
 company_name = ""
+
 
 def get_stock_info(ticker):
     stock = yf.Ticker(ticker)
@@ -33,19 +49,28 @@ def get_stock_info(ticker):
     }
 
 def display_stock_info(stock_info, exchange):
-    st.subheader(f"Stock Information for {company_name} on {exchange}")
-    for key, value in stock_info.items():
-        if value is not None:
-            st.text(f"{key} ({exchange}): {value}")
+    col1.subheader(f"Stock Information for {company_name} on {exchange}")
+    # Convert the stock_info dictionary to a Pandas DataFrame
+    df = pd.DataFrame(list(stock_info.items()), columns=["Metric", "Value"])
+    col1.table(df)
+
+
+def run_gemini(prompt):
+    response = gemini_model.generate_content(prompt)
+    st.session_state.messages.append({"role": "assistant", "content": response.text})
+    with col2.chat_message("assistant"):
+        col2.markdown(response.text)
+
 
 def main():
     global company_name
-    st.title("Stock Information")
-    company_name = st.text_input("Enter the name of the company:")
+    
+    col1.title("Stock Information")
+    company_name = col1.text_input("Enter the name of the company:")
     ticker_nse = f"{company_name}.NS"
     ticker_bse = f"{company_name}.BO"
 
-    if st.button("Get Stock Information"):
+    if col1.button("Get Stock Information"):
         try:
             stock_info_nse = get_stock_info(ticker_nse)
             if stock_info_nse["Current Price"] is not None:
@@ -59,14 +84,16 @@ def main():
                     # Construct the dynamic prompt
                     prompt = f"How has the stock been performing recently, considering its current price at {stock_info_bse['Current Price']}, today's opening price at {stock_info_bse['Today\'s Opening Price']}, and the previous closing price at {stock_info_bse['Previous Closing Price']}? Additionally, what are the 52-week high and low values ({stock_info_bse['52 Week High']} and {stock_info_bse['52 Week Low']}), and how do these relate to the current state of the stock? Provide insights into the dividend yield ({stock_info_bse['Dividend Yield']}), market cap ({stock_info_bse['Market Cap']}), and volume traded today ({stock_info_bse['Volume']}). How does the P/E ratio ({stock_info_bse['P/E Ratio']}) and forward P/E ratio ({stock_info_bse['Forward P/E Ratio']}) indicate the stock's valuation? Consider the earnings per share (EPS) at {stock_info_bse['Earnings Per Share (EPS)']} and the upcoming earnings date ({stock_info_bse['Earnings Date']}). Lastly, explore factors such as the dividend rate ({stock_info_bse['Dividend Rate']}), beta ({stock_info_bse['Beta']}), trailing annual dividend rate ({stock_info_bse['Trailing Annual Dividend Rate']}), trailing annual dividend yield ({stock_info_bse['Trailing Annual Dividend Yield']}), and float shares ({stock_info_bse['Float Shares']}). Based on these variables, what predictions can you make about the stock's future performance?"
                 else:
-                    st.write(f"Company {company_name} not found in NSE or BSE.")
+                    col1.write(f"Company {company_name} not found in NSE or BSE.")
                     return
         except Exception as e:
-            st.write("An error occurred:", e)
+            col1.write("An error occurred:", e)
             return
 
-        st.subheader("Stock Performance Evaluation Using AI")
-
+        col2.subheader("Stock Performance Evaluation Using AI")
+        
+        
+        
         if "openai_model" not in st.session_state:
             st.session_state["openai_model"] = "gpt-3.5-turbo"
 
@@ -74,15 +101,15 @@ def main():
             st.session_state.messages = []
 
         for message in st.session_state.messages:
-            with st.chat_message(message["role"]):
-                st.markdown(message["content"])
+            with col2.chat_message(message["role"]):
+                col2.markdown(message["content"])
 
         st.session_state.messages.append({"role": "user", "content": prompt})
-        with st.chat_message("user"):
-            st.markdown(prompt)
+        with col2.chat_message("user"):
+            col2.markdown(prompt)
 
-        with st.chat_message("assistant"):
-            message_placeholder = st.empty()
+        with col2.chat_message("assistant"):
+            message_placeholder = col2.empty()
             full_response = ""
             for response in client.chat.completions.create(
                 model=st.session_state["openai_model"],
@@ -95,8 +122,33 @@ def main():
                 full_response += (response.choices[0].delta.content or "")
                 message_placeholder.markdown(full_response + "▌")
             message_placeholder.markdown(full_response)
-        st.session_state.messages.append({"role": "assistant", "content": full_response})
 
+# Create the Gemini Model
+        gemini_model = genai.GenerativeModel('gemini-pro')
 
+        st.subheader("Stock Performance Evaluation Using AI")
+
+        if "messages" not in st.session_state:
+            st.session_state.messages = []
+
+        # Display chat messages from history
+        for message in st.session_state.messages:
+            with st.chat_message(message["role"]):
+                st.markdown(message["content"])
+
+        # User input
+        # prompt = st.text_input("Ask something:")
+
+        if prompt:
+
+            # Generate response using Gemini
+            response = gemini_model.generate_content(
+                [message["content"] for message in st.session_state.messages]
+            )
+
+            # Display assistant's response
+            with st.chat_message("assistant"):
+                st.markdown(response.text)
+        
 if __name__ == "__main__":
     main()
